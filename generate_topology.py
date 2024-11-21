@@ -57,15 +57,15 @@ def main():
 
         # Check the interfaces and populate links
         for interface in device['interfaces']:
+            if not (interface['connected_endpoints'] and len(interface['connected_endpoints'][0]) > 0 and 
+                    interface['connected_endpoints'][0]['device']['name'] in lab_device_names):
+                # Either interface has no connection or its to a node we are not simulating
+                continue
             interface_name = interface['name']
-            if interface['connected_endpoints'] and len(interface['connected_endpoints'][0]) > 0:
-                if not interface['connected_endpoints'][0]['device']['name'] in lab_device_names:
-                    # The far side is not a node requested in topology so no need to create it
-                    continue
-                connected_interfaces[device_name].append(interface_name)
-                links.add(get_link(device_name, interface_name,
-                          interface['connected_endpoints'][0]['device']['name'],
-                          interface['connected_endpoints'][0]['name']))
+            connected_interfaces[device_name].append(interface_name)
+            links.add(get_link_tupple(device_name, interface_name,
+                      interface['connected_endpoints'][0]['device']['name'],
+                      interface['connected_endpoints'][0]['name']))
 
     # Process all the links recorded and add them to topology in correct format
     for link_tupple in links:
@@ -78,47 +78,10 @@ def main():
         yaml.dump(clab_topo, outfile, default_flow_style=False, sort_keys=False)
     
 
-def generate_start_script(devices, connected_interfaces):
-    """ Iterates over devices again generating shell script commands to set up node IP addressing 
-        for those that need to be configured directly in Linux """
-    with open('output/start.sh', 'w') as outfile:
-        for device in devices:
-            if device['role']['slug'] == 'asw':
-                # ASW running SR-Linux is the only one right now we don't need to add commands for
-                continue
-            device_name = device['name']
-            outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
-                          f"sysctl -w net.ipv4.conf.all.arp_ignore=2\n")
-            for interface in device['interfaces']:
-                if not interface['ip_addresses']:
-                    continue
-                interface_name = interface['name']
-                if interface_name in connected_interfaces[device_name] or interface_name == "lo0":
-                    if device['device_type']['manufacturer']['slug'] == 'juniper':
-                        interface_name = get_valid_juniper_name(interface_name)
-                    for ip_addr in interface['ip_addresses']:
-                        outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
-                                      f"ip addr add {ip_addr['address']} dev {interface_name.replace('lo0', 'lo')}\n")
-                elif interface['parent'] and interface['parent']['name'] in connected_interfaces[device_name]:
-                    # Juniper sub-interfaces - we need to create sub-interface device, then add IPs
-                    interface_name = get_valid_juniper_name(interface_name)
-                    parent_name = get_valid_juniper_name(interface['parent']['name'])
-                    vlan = int(interface_name.split(".")[-1])
-                    # Create device:
-                    outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
-                                  f"ip link add link {parent_name} name {interface_name} type vlan id {vlan}\n")
-                    # Add IPs:
-                    for ip_addr in interface['ip_addresses']:
-                        outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
-                                  f"ip addr add {ip_addr['address']} dev {interface_name}\n")
-                    # Enable device:
-                    outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
-                                  f"ip link set dev {interface_name} up\n")
-
-            outfile.write('\n')
-
-def get_link(a_dev, a_int, b_dev, b_int) -> dict:
-    """ Returns tupple with devices and interfaces in link for first pass """
+def get_link_tupple(a_dev, a_int, b_dev, b_int) -> dict:
+    """ Returns tupple with devices and interfaces in the link, orders
+        the interfaces based on device name to ensure we get same 
+        tupple regardles of what order the ints are passed """
     if a_dev < b_dev:
         return (a_dev, a_int, b_dev, b_int)
     else:
@@ -140,16 +103,15 @@ def get_clab_link(link_tupple, device_vendors):
 
     return clab_link
 
-def get_nokia_name(juniper_name):
+
+def get_nokia_name(juniper_name: str) -> str:
     port_num = juniper_name.split('/')[-1]
     return f"e1-{port_num}"
 
-def get_valid_juniper_name(juniper_name):
+
+def get_valid_juniper_name(juniper_name: str) -> str:
     return juniper_name.replace('/', '_').replace(":", "_")
 
-def sr_int(junos_int: str) -> str:
-    port = junos_int.split("/")[-1]
-    return f"e1-{port}"
 
 def get_devices() -> dict:
     device_query = """
@@ -202,6 +164,46 @@ def get_graphql_query(query: str, variables: dict = None) -> dict:
     response = requests.post(url=url, headers=headers, json=data)
     response.raise_for_status()
     return response.json()['data']
+
+
+def generate_start_script(devices, connected_interfaces):
+    """ Iterates over devices again generating shell script commands to set up node IP addressing 
+        for those that need to be configured directly in Linux """
+    with open('output/start.sh', 'w') as outfile:
+        for device in devices:
+            if device['role']['slug'] == 'asw':
+                # ASW running SR-Linux is the only one right now we don't need to add commands for
+                continue
+            device_name = device['name']
+            outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
+                          f"sysctl -w net.ipv4.conf.all.arp_ignore=2\n")
+            for interface in device['interfaces']:
+                if not interface['ip_addresses']:
+                    continue
+                interface_name = interface['name']
+                if interface_name in connected_interfaces[device_name] or interface_name == "lo0":
+                    if device['device_type']['manufacturer']['slug'] == 'juniper':
+                        interface_name = get_valid_juniper_name(interface_name)
+                    for ip_addr in interface['ip_addresses']:
+                        outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
+                                      f"ip addr add {ip_addr['address']} dev {interface_name.replace('lo0', 'lo')}\n")
+                elif interface['parent'] and interface['parent']['name'] in connected_interfaces[device_name]:
+                    # Juniper sub-interfaces - we need to create sub-interface device, then add IPs
+                    interface_name = get_valid_juniper_name(interface_name)
+                    parent_name = get_valid_juniper_name(interface['parent']['name'])
+                    vlan = int(interface_name.split(".")[-1])
+                    # Create device:
+                    outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
+                                  f"ip link add link {parent_name} name {interface_name} type vlan id {vlan}\n")
+                    # Add IPs:
+                    for ip_addr in interface['ip_addresses']:
+                        outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
+                                  f"ip addr add {ip_addr['address']} dev {interface_name}\n")
+                    # Enable device:
+                    outfile.write(f"sudo ip netns exec clab-{args.name}-{device_name} " \
+                                  f"ip link set dev {interface_name} up\n")
+
+            outfile.write('\n')
 
 
 if __name__ == "__main__":
