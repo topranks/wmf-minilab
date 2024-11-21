@@ -28,7 +28,7 @@ def main():
         },
         'topology': {
             'kinds': {
-                'srlinux': { 'image': "ghcr.io/nokia/srlinux:24.7.2" },
+                'nokia_srlinux': { 'image': "ghcr.io/nokia/srlinux:24.7.2" },
                 'crpd': { 'image': "crpd:latest" },
                 'linux': { 'image': 'debian:clab' }
             },
@@ -50,7 +50,7 @@ def main():
         if device['role']['slug'] == 'server':
             clab_topo['topology']['nodes'][device_name] = { 'kind': 'linux' }
         if device['role']['slug'] == 'asw':
-            clab_topo['topology']['nodes'][device_name] = { 'kind': 'srlinux', 'type': 'ixrd2l' }
+            clab_topo['topology']['nodes'][device_name] = { 'kind': 'nokia_srlinux', 'type': 'ixrd2l' }
             device_vendors[device_name] = 'nokia'
         if device['role']['slug'] == 'cr':
             clab_topo['topology']['nodes'][device_name] = { 'kind': 'crpd' }
@@ -187,10 +187,10 @@ def get_devices() -> dict:
         "devices": args.hosts.split(",")
     }
 
-    return get_graph_query(device_query, device_query_vars)['device_list']
+    return get_graphql_query(device_query, device_query_vars)['device_list']
 
 
-def get_graph_query(query: str, variables: dict = None) -> dict:
+def get_graphql_query(query: str, variables: dict = None) -> dict:
     url = f"https://{args.netbox}/graphql/"
     headers = {
         'Authorization': f'Token {args.key}'
